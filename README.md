@@ -80,3 +80,30 @@ Se preferir trocar para outro provedor (Formspree, um backend próprio, etc.), b
 ## Pendências conhecidas
 - O domínio `www.etenyx.com` já aparece referenciado no rodapé/contato; ao publicar em um domínio definitivo, adicione tags `<link rel="canonical">` e `hreflang` entre os três idiomas para SEO.
 - Em telas muito estreitas o menu pode quebrar em duas linhas — se isso acontecer, ajuste o espaçador de `72px` logo abaixo do `<header>` em cada `index.html`.
+
+## Revisão de segurança (security-by-design)
+
+Revisão manual cobrindo o código atual (o skill `/security-review` do Claude Code exige um repositório git com um remote `origin` configurado para comparar `git diff`, o que não se aplica a este projeto recém-inicializado sem remote).
+
+### O que já está correto
+- **Sem XSS de DOM**: nenhum uso de `innerHTML`, `eval` ou `document.write` em `js/main.js`. Toda escrita dinâmica no DOM usa `textContent` (mensagens de sucesso/erro do formulário), e o conteúdo vem de atributos `data-*` que nós mesmos escrevemos no HTML — nunca de entrada do usuário refletida de volta na página.
+- **Sem segredos no client**: não há chave de API nem token algum no código. O FormSubmit funciona só com o e-mail de destino na URL (`contato@etenyx.com`), que já é público (aparece como link `mailto:` na própria página) — não há nada de sensível para vazar.
+- **Honeypot bem implementado**: o campo `_honey` é oculto (`display:none`), fica fora da ordem de tab (`tabindex="-1"`) e tem `autocomplete="off"` — evita que o autofill do navegador o preencha e gere falso-positivo de spam.
+- **Sem scripts de terceiros**: Google Fonts é carregado só como `<link>` de CSS (não executa JS na página) e o FormSubmit é chamado via `fetch` (POST de dados), nunca via `<script src="...">` — ou seja, nenhum código de terceiro roda com privilégio total na página, só os nossos próprios `js/main.js` e `js/redirect.js`.
+- **HTTPS de ponta a ponta**: Google Fonts e FormSubmit são chamados só via `https://`.
+
+### O que foi corrigido nesta revisão
+- **Script inline removido do `index.html` raiz** ([js/redirect.js](js/redirect.js)): antes o redirecionamento por idioma estava num `<script>` inline dentro do `<head>`. Isso obrigaria a CSP a incluir `'unsafe-inline'` em `script-src` (o que anula boa parte da proteção contra XSS que a CSP oferece). Agora é um arquivo externo, permitindo `script-src 'self'` sem exceções.
+
+### Trade-offs conscientes (não são bugs, mas vale registrar o motivo)
+- **`_captcha=false`** no formulário: desativa a tela de captcha do FormSubmit para manter o modal fluido. Compensado pelo honeypot, mas é uma defesa mais fraca contra automação — se o formulário começar a receber spam, o primeiro ajuste é remover essa flag (volta o captcha) antes de trocar de provedor.
+- **`style-src 'unsafe-inline'` necessário na CSP abaixo**: o site inteiro usa `style="..."` inline (para fidelidade pixel a pixel ao design), então uma CSP 100% estrita sem `unsafe-inline` em `style-src` exigiria reescrever todo o CSS para classes — fora do escopo desta tarefa. O risco prático é baixo (injeção de CSS é bem menos perigosa que injeção de JS, e não há entrada de usuário refletida em nenhum `style`), mas fica registrado como a única concessão da política abaixo.
+- **Validação é só client-side (`required`, `type="email"`)**: a validação real de formato/abuso de conteúdo do lado do "servidor" é feita pelo FormSubmit, um terceiro fora do nosso controle. Isso é inerente a usar um backend de formulário de terceiros sem servidor próprio — se no futuro o volume de spam/abuso justificar, a solução é adicionar uma função serverless própria (Netlify Functions / Vercel Functions) com validação e rate-limiting antes de encaminhar o e-mail.
+
+### Headers de segurança para o processo de publicação
+Já criei os arquivos prontos no projeto, com uma Content-Security-Policy restritiva (`default-src 'self'`, permitindo só Google Fonts, FormSubmit e os próprios arquivos do site) mais os headers padrão de hardening (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security`):
+
+- **[`_headers`](_headers)** — aplicado automaticamente pelo **Netlify** (não precisa de configuração extra, o arquivo já é reconhecido na raiz do site).
+- **[`vercel.json`](vercel.json)** — aplicado automaticamente pela **Vercel** (idem, sem passo manual).
+- **GitHub Pages**: **não suporta headers HTTP customizados** — não há como aplicar CSP/HSTS/etc. diretamente lá. Se a publicação final for em GitHub Pages, considere colocar o Cloudflare (plano gratuito) na frente do domínio para adicionar esses headers via "Transform Rules", ou usar Netlify/Vercel em vez do GitHub Pages puro.
+- Ao trocar o provedor do formulário (ver seção acima) ou adicionar qualquer novo recurso externo (analytics, chat, etc.), **lembre de atualizar a CSP** nos dois arquivos — ela é restritiva de propósito e vai bloquear silenciosamente qualquer domínio novo não listado em `connect-src`/`script-src`/`style-src`/`font-src`.
