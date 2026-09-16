@@ -16,6 +16,7 @@ Site 100% estático — HTML/CSS/JS puros, sem build step, sem backend próprio.
 | `etenyx.ai` / `www.etenyx.ai` | ✅ redirecionam (301) para `https://www.etenyx.com` via Cloudflare Redirect Rule |
 | `etenyx.com.br` / `www.etenyx.com.br` | ✅ redirecionam (301) para `https://www.etenyx.com` via Cloudflare Redirect Rule (DNS migrado do registro.br para o Cloudflare) |
 | Formulário de contato | ✅ ativado e testado, entrega em `contato@etenyx.com` via FormSubmit.co |
+| Headers de segurança (CSP, HSTS, etc.) | ✅ ativos via Cloudflare (proxy + Transform Rule) na frente de `www.etenyx.com` |
 
 ## Como fazer alterações e publicar
 
@@ -43,8 +44,8 @@ css/style.css          → estilos compartilhados (reset + modal de contato)
 js/main.js             → hover states, abrir/fechar modal, envio do formulário
 js/redirect.js         → lógica de redirecionamento por idioma do index.html raiz
 assets/                → logo, marca e imagem "DNA Digital"
-_headers                → headers de segurança para Netlify (não usado no GitHub Pages atual — ver "Pendências")
-vercel.json             → headers de segurança para Vercel (idem)
+_headers                → referência dos headers de segurança para Netlify (hoje replicados manualmente via Cloudflare Transform Rule — ver seção de Segurança)
+vercel.json             → referência dos headers de segurança para Vercel (idem)
 ```
 As três páginas de idioma usam estilos inline (fiéis ao design original) para o conteúdo das seções, e `css/style.css` + `js/main.js` só para o que precisa de comportamento real: hover e o formulário de contato.
 
@@ -151,19 +152,26 @@ Migrado do registro.br para o Cloudflare com a mesma configuração do `etenyx.a
 - **CSP precisaria de `style-src 'unsafe-inline'`**: o site usa `style="..."` inline extensivamente (fidelidade pixel a pixel ao design). Risco baixo (injeção de CSS é bem menos perigosa que JS, sem entrada de usuário refletida em nenhum `style`), mas é a concessão da política em `_headers`/`vercel.json`.
 - **Validação só client-side** (`required`, `type="email"`): a validação "de servidor" é responsabilidade do FormSubmit (terceiro). Se o volume de abuso justificar no futuro, a solução é uma function serverless própria com validação e rate-limiting.
 
-### ⚠️ Headers de segurança — criados mas NÃO ativos em produção
-Os arquivos `_headers` (Netlify) e `vercel.json` (Vercel) já existem no repositório com uma CSP restritiva e os headers padrão de hardening (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security`) — **mas o site está hospedado no GitHub Pages, que não lê nenhum dos dois arquivos e não suporta headers HTTP customizados nativamente.** Ou seja, hoje esses headers não estão sendo aplicados de verdade.
+### ✅ Headers de segurança — ativos em produção via Cloudflare
+O GitHub Pages não suporta headers HTTP customizados nativamente, então os arquivos `_headers`/`vercel.json` do repositório (mantidos como referência/documentação da política) não são lidos por ele. Os headers estão ativos de verdade através do Cloudflare, que fica na frente de `www.etenyx.com`:
 
-Como `www.etenyx.com` já tem o DNS no Cloudflare (hoje em modo "DNS only"/nuvem cinza, necessário para o certificado do GitHub funcionar), a forma de ativar esses headers sem trocar de host é:
-1. Ativar o proxy da Cloudflare (nuvem laranja) para os registros de `www.etenyx.com` — atenção: fazer isso só depois de confirmar que o certificado do GitHub Pages já foi emitido e "Enforce HTTPS" está ligado, para não interromper o site durante a troca.
-2. Criar uma **Transform Rule** (Modify Response Header) no Cloudflare replicando os mesmos headers do `_headers`/`vercel.json` (mesmos valores de CSP etc.).
-3. Testar em `https://www.etenyx.com` que os headers aparecem (`curl -I` ou DevTools → Network).
+1. **Proxy da Cloudflare ativado** (nuvem laranja) nos registros `A`/`CNAME` de `www.etenyx.com` — modo SSL/TLS em **Full** (verificado antes da troca que o certificado do GitHub Pages já estava emitido e válido, para não interromper o site).
+2. **Transform Rule** em **Rules → Transform Rules → HTTP Response Header Modification** (⚠️ não confundir com "HTTP **Request** Header Modification", que modifica o que a Cloudflare envia para a origem, não o que ela devolve ao visitante — foi o erro na primeira tentativa), regra "Security headers", condição `All incoming requests`, com os 6 headers abaixo (`Set static`):
+   - `Content-Security-Policy`
+   - `X-Content-Type-Options`
+   - `X-Frame-Options`
+   - `Referrer-Policy`
+   - `Permissions-Policy`
+   - `Strict-Transport-Security`
 
-Alternativa mais simples: migrar a hospedagem de GitHub Pages para Netlify ou Vercel, que já leem `_headers`/`vercel.json` automaticamente sem passo manual nenhum.
+   Valores exatos: os mesmos definidos em [`_headers`](_headers)/[`vercel.json`](vercel.json) — se a política precisar mudar (novo domínio externo, novo script, etc.), atualize os **três lugares** (a Transform Rule no Cloudflare É a fonte da verdade em produção; os arquivos no repo documentam a mesma política para quem usar Netlify/Vercel no futuro).
+
+Confirmado via `curl -I https://www.etenyx.com` — todos os 6 headers presentes na resposta.
+
+⚠️ **Atenção para não quebrar isso no futuro**: como o proxy da Cloudflare agora está ativo em `www.etenyx.com`, **nunca crie uma Redirect Rule "All incoming requests" nessa zona** — ela entraria em loop com o próprio domínio (isso só não era um risco antes porque o registro ficava em "DNS only").
 
 ## Pendências conhecidas
-1. **Headers de segurança não ativos**: ver seção acima — precisa da Transform Rule no Cloudflare (ou trocar de host).
-2. **SEO**: adicionar `<link rel="canonical">` e tags `hreflang` entre os três idiomas agora que o domínio definitivo (`www.etenyx.com`) está confirmado.
-3. **Header responsivo**: em telas muito estreitas o menu pode quebrar em duas linhas — se isso acontecer na prática, ajuste o espaçador de `72px` logo abaixo do `<header>` em cada `index.html`.
+1. **SEO**: adicionar `<link rel="canonical">` e tags `hreflang` entre os três idiomas agora que o domínio definitivo (`www.etenyx.com`) está confirmado.
+2. **Header responsivo**: em telas muito estreitas o menu pode quebrar em duas linhas — se isso acontecer na prática, ajuste o espaçador de `72px` logo abaixo do `<header>` em cada `index.html`.
 
-Os 3 domínios (`etenyx.com`, `etenyx.ai`, `etenyx.com.br`) e o formulário de contato estão publicados e funcionando — sem pendências de infraestrutura além dos itens acima.
+Os 3 domínios (`etenyx.com`, `etenyx.ai`, `etenyx.com.br`), o formulário de contato e os headers de segurança estão publicados e funcionando — sem pendências de infraestrutura além dos itens acima.
