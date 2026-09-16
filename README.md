@@ -14,7 +14,7 @@ Site 100% estático — HTML/CSS/JS puros, sem build step, sem backend próprio.
 | Domínio principal | `www.etenyx.com` — ✅ ativo, HTTPS válido |
 | `etenyx.com` (sem www) | ✅ redireciona (301) para `www.etenyx.com` automaticamente pelo GitHub Pages |
 | `etenyx.ai` / `www.etenyx.ai` | ✅ redirecionam (301) para `https://www.etenyx.com` via Cloudflare Redirect Rule |
-| `etenyx.com.br` | ⏳ **pendente** — ver seção "DNS e domínios" abaixo |
+| `etenyx.com.br` / `www.etenyx.com.br` | ✅ redirecionam (301) para `https://www.etenyx.com` via Cloudflare Redirect Rule (DNS migrado do registro.br para o Cloudflare) |
 | Formulário de contato | ✅ ativado e testado, entrega em `contato@etenyx.com` via FormSubmit.co |
 
 ## Como fazer alterações e publicar
@@ -78,28 +78,29 @@ Três domínios apontam (ou vão apontar) para este mesmo site: `etenyx.com`, `e
   - `A @ → 185.199.111.153`
 - No GitHub: repositório → **Settings → Pages** → Custom domain = `www.etenyx.com`, **Enforce HTTPS** ativado.
 - O arquivo `CNAME` na raiz do repositório precisa conter exatamente `www.etenyx.com` (já está commitado).
+- ⚠️ **Não criar nenhuma Redirect Rule na zona Cloudflare deste domínio.** É o domínio canônico de verdade — uma regra de redirect aqui ficaria "adormecida" enquanto os registros forem DNS only, mas criaria um loop de redirecionamento (derrubando o site) no dia em que o proxy (nuvem laranja) for ativado, por exemplo para aplicar os headers de segurança pendentes (ver seção de Segurança).
 
 ### `etenyx.ai` / `www.etenyx.ai` (redirect — ✅ ativo)
 - DNS no Cloudflare, registros em modo **Proxied** (nuvem laranja — precisa ficar assim para a regra de redirect funcionar):
   - `A @ → 192.0.2.1` (IP placeholder, nunca usado de verdade — só existe para o domínio "existir" no DNS e passar pelo proxy da Cloudflare)
   - `A www → 192.0.2.1`
 - Regra em **Rules → Redirect Rules**:
-  - **If incoming requests match**: `All incoming requests` (não usar "Wildcard pattern" contra a Request URL — dá muito mais margem para erro de sintaxe)
+  - **If incoming requests match**: `All incoming requests` (não usar "Wildcard pattern" contra a Request URL — dá muito mais margem para erro de sintaxe; foi a causa de um erro 522 durante a configuração)
   - **Then**: Redirect to target URL → **Type: Static** → `https://www.etenyx.com`
   - **Status code**: 301
   - Preserve query string: opcional (marcado)
 
-### `etenyx.com.br` (redirect — ⏳ em migração)
-**Estado atual**: usa o recurso nativo de redirecionamento do registro.br, apontando para `https://www.etenyx.com`. **Funciona por HTTP, mas por HTTPS o navegador mostra aviso de "site não seguro"** — o certificado TLS do serviço de redirect do registro.br é emitido para `r.registro.br`, não para `etenyx.com.br`, gerando erro de nome de certificado. Como a maioria dos navegadores tenta HTTPS primeiro, isso afeta a maior parte dos visitantes.
+### `etenyx.com.br` / `www.etenyx.com.br` (redirect — ✅ ativo)
+Migrado do registro.br para o Cloudflare com a mesma configuração do `etenyx.ai` acima (`A @` e `A www` → `192.0.2.1`, proxied; Redirect Rule "All incoming requests" → Static → `https://www.etenyx.com`, 301).
 
-**Correção em andamento**: migrar o DNS do domínio para o Cloudflare (que emite certificado válido automaticamente), replicando a mesma configuração do `etenyx.ai`.
+**Por que migrar em vez de usar o redirecionamento nativo do registro.br**: o registro.br tem um recurso de redirect de domínio pronto, mas o certificado TLS do serviço deles é emitido para `r.registro.br`, não para o domínio do cliente — isso faz o navegador mostrar aviso de "site não seguro" em toda visita por HTTPS (que é o padrão dos navegadores modernos). Migrar o DNS para o Cloudflare resolve isso, porque a Cloudflare emite certificado válido automaticamente para qualquer domínio na sua rede.
 
-Passos (o que falta):
-1. No Cloudflare: domínio `etenyx.com.br` já foi adicionado via "Connect a domain" — os registros existentes (A, AAAA, CAA, CNAME, MX, TXT) já foram importados como estavam.
-   - O registro **MX** encontrado é um **"Null MX"** (`priority 0`, servidor `.`) — é a declaração padrão de "este domínio não recebe e-mail", não um serviço real. Confirmado: o único e-mail em uso pela empresa é `contato@etenyx.com` (Zoho), não há nada em `etenyx.com.br` para preservar.
-2. **Falta**: trocar os nameservers no painel do **registro.br** (seção "DNS", não "Configurar zona DNS") de `a.auto.dns.br` / `b.auto.dns.br` para os que o Cloudflare atribuiu a essa zona: `guss.ns.cloudflare.com` / `walk.ns.cloudflare.com`. Essa troca pode levar de algumas horas a 1-2 dias para propagar.
-3. Depois que o Cloudflare marcar o domínio como **Active**: adicionar os mesmos registros e a mesma Redirect Rule descritos na seção do `etenyx.ai` acima (`A @` e `A www` → `192.0.2.1`, proxied; regra "All incoming requests" → Static → `https://www.etenyx.com`).
-4. Testar `https://etenyx.com.br` e `https://www.etenyx.com.br` — devem redirecionar sem aviso de segurança.
+**Registro MX preservado**: o scan de importação do Cloudflare encontrou um registro MX do tipo **"Null MX"** (`priority 0`, servidor `.`) — é a declaração técnica padrão de "este domínio não recebe e-mail", não um serviço real. Confirmado que o único e-mail da empresa é `contato@etenyx.com` (Zoho, em outro domínio) — nada foi perdido.
+
+**Pegadinhas encontradas durante essa migração específica** (documentadas para não repetir o troubleshooting):
+1. A troca de nameservers no registro.br não é instantânea — eles seguram a mudança por um período de segurança (nesse caso ~1h42) antes de liberar, mesmo depois de o painel já mostrar os nameservers novos. É preciso esperar esse prazo passar.
+2. O registro **A** que o Cloudflare importou automaticamente ao conectar o domínio ainda apontava para o IP do serviço de redirect **antigo** do registro.br (`200.160.2.95`), só com o proxy (nuvem laranja) ativado por cima. Isso fazia o site funcionar (Cloudflare terminava o TLS com certificado válido) mas o redirecionamento em si ainda vinha do registro.br por trás (por isso aparecia como **302**, não 301). Foi preciso editar o registro A manualmente e trocar o IP para o placeholder `192.0.2.1`, como nos outros domínios.
+3. Uma regra de redirect **errada** (com condição `Wildcard pattern` para `https://*.etenyx.ai` — sobra de um teste feito na zona errada) acabou criada dentro da zona `etenyx.com.br`. Uma regra malformada/de outro domínio na mesma zona pode quebrar a avaliação de **todas** as regras daquela zona, fazendo a Cloudflare devolver 404 vazio para tudo. Ao encontrar um comportamento inexplicável numa Redirect Rule, sempre confira se não há outra regra (ativa ou não) na mesma zona atrapalhando.
 
 ## Interações
 - Scroll suave (`scroll-behavior: smooth`) para os links de âncora do nav.
@@ -161,7 +162,8 @@ Como `www.etenyx.com` já tem o DNS no Cloudflare (hoje em modo "DNS only"/nuvem
 Alternativa mais simples: migrar a hospedagem de GitHub Pages para Netlify ou Vercel, que já leem `_headers`/`vercel.json` automaticamente sem passo manual nenhum.
 
 ## Pendências conhecidas
-1. **`etenyx.com.br`**: concluir a migração de DNS para o Cloudflare (ver seção "DNS e domínios" acima) — enquanto isso não acontece, o domínio mostra aviso de segurança no navegador.
-2. **Headers de segurança não ativos**: ver seção acima — precisa da Transform Rule no Cloudflare (ou trocar de host).
-3. **SEO**: adicionar `<link rel="canonical">` e tags `hreflang` entre os três idiomas agora que o domínio definitivo (`www.etenyx.com`) está confirmado.
-4. **Header responsivo**: em telas muito estreitas o menu pode quebrar em duas linhas — se isso acontecer na prática, ajuste o espaçador de `72px` logo abaixo do `<header>` em cada `index.html`.
+1. **Headers de segurança não ativos**: ver seção acima — precisa da Transform Rule no Cloudflare (ou trocar de host).
+2. **SEO**: adicionar `<link rel="canonical">` e tags `hreflang` entre os três idiomas agora que o domínio definitivo (`www.etenyx.com`) está confirmado.
+3. **Header responsivo**: em telas muito estreitas o menu pode quebrar em duas linhas — se isso acontecer na prática, ajuste o espaçador de `72px` logo abaixo do `<header>` em cada `index.html`.
+
+Os 3 domínios (`etenyx.com`, `etenyx.ai`, `etenyx.com.br`) e o formulário de contato estão publicados e funcionando — sem pendências de infraestrutura além dos itens acima.
